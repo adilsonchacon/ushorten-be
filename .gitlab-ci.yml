@@ -1,0 +1,76 @@
+stages:
+  - test
+  - build
+  - deploy
+
+variables:
+  POSTGRES_DB: ushorten_test
+  POSTGRES_USER: ushorten
+  POSTGRES_PASSWORD: ushorten_pass
+  POSTGRES_HOST_AUTH_METHOD: trust
+  ELIXIR_VERSION: 1.15.2
+  OTP_VERSION: 26.0.2
+  DEBIAN_VERSION: bullseye-20230612-slim
+
+default:
+  tags:
+    - ushorten_be
+
+test:
+  stage: test
+  image: hexpm/elixir:$ELIXIR_VERSION-erlang-$OTP_VERSION-debian-$DEBIAN_VERSION
+  services:
+    - postgres:12.2-alpine
+  before_script:
+    - apt-get update -y
+    - apt-get install -y build-essential git
+    - apt-get clean
+    - rm -f /var/lib/apt/lists/*_*
+    - mix local.hex --force
+    - mix deps.get
+    - export DB_TEST_USERNAME=$POSTGRES_USER
+    - export DB_TEST_PASSWORD=$POSTGRES_PASSWORD
+    - export DB_TEST_HOSTNAME=postgres
+    - export DB_TEST_DATABASE=$POSTGRES_DB
+    - export RECAPTCHA_ENABLED=false
+    - MIX_ENV=test mix ecto.migrate
+  script:
+    - mix test
+
+build:
+  stage: build
+  only:
+    - main
+  image: docker:20.10.23
+  services:
+    - docker:20.10.23-dind
+  before_script:
+    - apk update
+    - apk upgrade
+    - apk add --update alpine-sdk
+    - apk add --no-cache bash git openssh make cmake
+    - cp $BUILD_ENV_VARS .env
+  script:
+    - make login
+    - make build
+    - make push
+    - make latest
+
+
+deploy:
+  stage: deploy
+  only:
+    - main
+  image: tmaier/docker-compose:latest
+  services:
+    - docker:20.10.23-dind
+  before_script:
+    - apk update
+    - apk upgrade
+    - apk add --update alpine-sdk
+    - apk add --no-cache bash git openssh make cmake
+    - cp $ENV_VARS .env
+  script:
+    - make login
+    - make remove
+    - make start
